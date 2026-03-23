@@ -23,6 +23,7 @@ EVENT_ID     = 1000000000
 N_COMPONENTS = 15
 RANDOM_STATE = 42
 
+# METHODS = ['amuse']
 METHODS = ['fastica', 'infomax', 'picard', 'jade', 'sobi', 'amuse']
 
 
@@ -33,6 +34,16 @@ def build_epochs_and_evoked(raw, tmin, tmax, baseline, reject):
                     baseline=baseline, detrend=1, reject=reject,
                     preload=True, verbose=False)
     return epochs, epochs.average()
+
+
+def compute_sf(data_before, data_after):
+    """SF = 20*log10( mean over channels of RMS_before / RMS_after )"""
+    rms_before = np.sqrt(np.mean(data_before**2, axis=1))
+    rms_after  = np.sqrt(np.mean(data_after**2,  axis=1))
+    mask = rms_after > 1e-30
+    sf_linear = np.mean(rms_before[mask] / rms_after[mask])
+    sf_db = 20 * np.log10(sf_linear) if sf_linear > 0 else np.nan
+    return sf_linear, sf_db
 
 
 def compute_snr_from_evoked(evoked, sig_tmin=0.0, sig_tmax=0.1, noise_tmin=-0.1, noise_tmax=0.0):
@@ -253,23 +264,48 @@ for method in METHODS:
     matplotlib.use('Agg')
     print(f"  排除成分: {exclude}")
 
-    raw_after = raw_before.copy()
-    ica.apply(raw_after, verbose=False)
-    _, evoked_after = build_epochs_and_evoked(raw_after, TMIN, TMAX, BASELINE, REJECT)
-    snr_lin, snr_db, noise_rms_after = compute_snr_from_evoked(evoked_after)
-    picks_ev = mne.pick_types(evoked_before.info, meg=True, exclude='bads')
-    data_before = evoked_before.data[picks_ev]
-    data_after  = evoked_after.data[picks_ev]
-    removed = data_before - data_after
-    sf_linear = np.mean(removed**2) / np.mean(data_before**2) if np.mean(data_before**2) > 0 else np.nan
-    sf_db = 10 * np.log10(sf_linear) if sf_linear > 0 else np.nan
+    if len(exclude) == 0:
+        evoked_after = evoked_before
+        snr_lin, snr_db = snr_lin_before, snr_db_before
+        sf_linear, sf_db = 0.0, float('-inf')
+    else:
+        raw_after = raw_before.copy()
+        ica.apply(raw_after, verbose=False)
+        _, evoked_after = build_epochs_and_evoked(raw_after, TMIN, TMAX, BASELINE, REJECT)
+        snr_lin, snr_db, _ = compute_snr_from_evoked(evoked_after)
+        picks_ev = mne.pick_types(evoked_before.info, meg=True, exclude='bads')
+        data_before = evoked_before.data[picks_ev]
+        data_after  = evoked_after.data[picks_ev]
+        sf_linear, sf_db = compute_sf(data_before, data_after)
 
     print(f"  SNR after : {snr_lin:.4f} ({snr_db:.2f} dB)  |  Delta SNR: {snr_db - snr_db_before:+.2f} dB  |  SF: {sf_linear:.4f} ({sf_db:.2f} dB)")
     results[method] = dict(snr_lin=snr_lin, snr_db=snr_db,
                            delta_snr_db=snr_db - snr_db_before,
                            sf_linear=sf_linear, sf_db=sf_db,
-                           n_excluded=len(exclude))
+                           n_excluded=len(exclude), excluded_components=exclude)
     evokeds[method] = evoked_after
+
+    # ICA 后立即弹出 evoked 对比图
+    matplotlib.use('TkAgg')
+    fig_ev, axes_ev = plt.subplots(1, 2, figsize=(10, 4), facecolor='white')
+    for ax, evoked, title in zip(axes_ev,
+                                  [evoked_before, evoked_after],
+                                  ['Before ICA', f'After ICA ({method.upper()})']):
+        evoked.plot(axes=ax, spatial_colors=True, show=False, titles=None, time_unit='s')
+        for text in list(ax.texts):
+            text.remove()
+        ax.axvline(0, color='red', linestyle='--', linewidth=1)
+        ax.axvspan(BASELINE[0], BASELINE[1], alpha=0.1, color='blue')
+        ax.grid(True, alpha=0.3)
+    axes_ev[0].set_title(f"Before ICA\nSNR {snr_db_before:.1f} dB", fontsize=9)
+    axes_ev[1].set_title(f"After ICA ({method.upper()})\nSNR {snr_db:.1f} dB  dSNR {snr_db - snr_db_before:+.1f} dB  excluded {len(exclude)}", fontsize=9)
+    fig_ev.suptitle(f'Touch MEG — {method.upper()} Before/After ICA', fontsize=11)
+    fig_ev.tight_layout()
+    plt.show(block=True)
+    matplotlib.use('Agg')
+    fig_ev.savefig(os.path.join(OUTPUT_DIR, f'evoked_{method}.png'), dpi=300, bbox_inches='tight')
+    plt.close(fig_ev)
+    print(f"  已保存: evoked_{method}.png")
 
 
 # %% 保存指标 JSON
@@ -282,7 +318,7 @@ print("\n已保存指标 JSON")
 # %% 对比图：各方法 evoked
 n_plots = 1 + len([m for m in METHODS if m in evokeds])
 fig, axes = plt.subplots(1, n_plots, figsize=(5 * n_plots, 5), facecolor='white')
-plot_items = [('before', 'ICA 前')] + [(m, m.upper()) for m in METHODS if m in evokeds]
+plot_items = [('before', 'Before ICA')] + [(m, m.upper()) for m in METHODS if m in evokeds]
 
 for ax, (key, title) in zip(axes, plot_items):
     evokeds[key].plot(axes=ax, spatial_colors=True, show=False, titles=None, time_unit='s')
@@ -290,7 +326,7 @@ for ax, (key, title) in zip(axes, plot_items):
         text.remove()
     if key in results and key != 'before':
         r = results[key]
-        subtitle = f"SNR {r['snr_db']:.1f} dB  ΔSNR {r['delta_snr_db']:+.1f} dB\nSF {r['sf_db']:.1f} dB  排除 {r['n_excluded']} 个"
+        subtitle = f"SNR {r['snr_db']:.1f} dB  dSNR {r['delta_snr_db']:+.1f} dB\nSF {r['sf_db']:.1f} dB  excluded {r['n_excluded']}"
     else:
         subtitle = f"SNR {snr_db_before:.1f} dB"
     ax.set_title(f"{title}\n{subtitle}", fontsize=9)
@@ -298,7 +334,7 @@ for ax, (key, title) in zip(axes, plot_items):
     ax.axvspan(BASELINE[0], BASELINE[1], alpha=0.1, color='blue')
     ax.grid(True, alpha=0.3)
 
-fig.suptitle('触觉 MEG — ICA 方法对比', fontsize=13)
+fig.suptitle('Touch MEG — ICA Method Comparison', fontsize=13)
 plt.tight_layout()
 out_path = os.path.join(OUTPUT_DIR, 'ica_compare_evoked.png')
 fig.savefig(out_path, dpi=300, bbox_inches='tight')
@@ -318,11 +354,11 @@ for ax, vals, ylabel, title in zip(
         axes,
         [snr_vals, delta_vals, sf_vals],
         ['SNR (dB)', 'ΔSNR (dB)', 'SF (dB)'],
-        ['去噪后 SNR', 'SNR 提升量', '噪声抑制因子 SF']):
+        ['Denoised SNR', 'SNR Improvement', 'Suppression Factor SF']):
     bars = ax.bar(x, vals, color=['#4C72B0', '#DD8452', '#55A868', '#C44E52'][:len(methods_done)])
     ax.axhline(0, color='gray', linewidth=0.8)
-    if title == '去噪后 SNR':
-        ax.axhline(snr_db_before, color='red', linestyle='--', linewidth=1, label=f'去噪前 {snr_db_before:.1f} dB')
+    if title == 'Denoised SNR':
+        ax.axhline(snr_db_before, color='red', linestyle='--', linewidth=1, label=f'Before ICA {snr_db_before:.1f} dB')
         ax.legend(fontsize=8)
     ax.set_xticks(x)
     ax.set_xticklabels([m.upper() for m in methods_done])

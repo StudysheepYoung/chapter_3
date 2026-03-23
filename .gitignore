@@ -13,4 +13,7 @@ vision/*.mat
 touch/batch*
 touch/conference
 touch/ica*
-EEGdenoiseNet
+EEGdenoiseNet/.claude
+EEGdenoiseNet/data
+EEGdenoiseNet/CLAUDE.md
+test

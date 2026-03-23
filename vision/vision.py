@@ -62,7 +62,7 @@ from mne import find_events, Epochs
 data_path = r"/Users/luckyyoung/Desktop/data/vision/20241214 104044.basedata"
 sensor_path = r'/Users/luckyyoung/Desktop/data/vision/sensors_mecg64.mat'
 raw,read_raw_data,raw_data = read_meg_data(data_path,sensor_path)
-raw.filter(l_freq=1.5, h_freq=40, method='iir', verbose=True)
+raw.filter(l_freq=1, h_freq=40, method='fir', verbose=True)
 
 # %% 参数
 tmin, tmax = -0.1, 0.6
