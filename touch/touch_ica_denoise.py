@@ -83,6 +83,9 @@ for fif_path in fif_files:
     _, evoked_before = build_epochs_and_evoked(raw_before, TMIN, TMAX, BASELINE, REJECT)
     snr_lin_before, snr_db_before, noise_rms_before = compute_snr_from_evoked(evoked_before)
     print(f"  SNR before : {snr_lin_before:.4f}  ({snr_db_before:.2f} dB)")
+    fig = evoked_before.plot(spatial_colors=True, show=False, time_unit='s')
+    fig.savefig(os.path.join(os.path.dirname(__file__), 'evoked_before.png'), dpi=300, bbox_inches='tight')
+    plt.close(fig)
 
     # 拟合 ICA（1–40 Hz 副本）
     raw_ica_fit = raw.copy()

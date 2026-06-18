@@ -117,7 +117,9 @@ raw_before = raw.copy()
 raw_before.filter(1.5, 40.0, picks='meg', verbose=False)
 
 _, evoked_before = build_epochs_and_evoked(raw_before, TMIN, TMAX, BASELINE, REJECT)
-
+fig = evoked_before.plot(spatial_colors=True, show=False, time_unit='s')                                                                                                                                
+fig.savefig('evoked_before.png', dpi=300, bbox_inches='tight')                                                                                                                                          
+plt.close(fig) 
 snr_lin_before, snr_db_before, noise_rms_before = compute_snr_from_evoked(evoked_before)
 print(f"SNR before : {snr_lin_before:.4f}  ({snr_db_before:.2f} dB)")
 

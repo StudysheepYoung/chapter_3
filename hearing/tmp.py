@@ -8,23 +8,17 @@ import numpy as np
 import mne
 import scipy.io as scio
 from mne import find_events, Epochs
-from mne.preprocessing import ICA
 import matplotlib.pyplot as plt
 
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH    = os.path.join(SCRIPT_DIR, "20241214 104044.basedata")
+DATA_PATH    = os.path.join(SCRIPT_DIR, "20241214 105123.basedata")
 SENSOR_PATH  = os.path.join(SCRIPT_DIR, "sensors_mecg64.mat")
 OUTPUT_DIR   = os.path.join(SCRIPT_DIR, "ica_compare_results")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-TMIN, TMAX   = -0.1, 0.6
+TMIN, TMAX   = -0.1, 0.4
 BASELINE     = (-0.1, 0)
 REJECT       = dict(mag=3e-9)
-N_COMPONENTS = 15
-RANDOM_STATE = 42
-
-METHODS = ['fastica', 'infomax', 'picard', 'jade', 'sobi', 'amuse']
-
 
 # %% 辅助函数
 def read_meg_data(data_path, sensor_path):
@@ -79,7 +73,7 @@ def read_meg_data(data_path, sensor_path):
 
 def build_epochs_and_evoked(raw, tmin, tmax, baseline, reject):
     events = find_events(raw, stim_channel='Trigger', verbose=False)
-    # events[:, 0] += 400
+    events[:, 0] += 400
     event_id = int(np.unique(events[:, 2])[0])
     epochs = Epochs(raw, events, event_id, tmin=tmin, tmax=tmax,
                     baseline=baseline, detrend=1, reject=reject,
@@ -97,7 +91,7 @@ def compute_sf(data_before, data_after):
     return sf_linear, sf_db
 
 
-def compute_snr_from_evoked(evoked, sig_tmin=0.2, sig_tmax=0.4, noise_tmin=-0.1, noise_tmax=0.0):
+def compute_snr_from_evoked(evoked, sig_tmin=0.05, sig_tmax=0.15, noise_tmin=-0.1, noise_tmax=0.0):
     picks = mne.pick_types(evoked.info, meg=True, exclude='bads')
     data = evoked.data[picks]
     times = evoked.times
@@ -270,167 +264,12 @@ def build_ica_from_jade(raw_fit, picks, n_comp):
 raw = read_meg_data(DATA_PATH, SENSOR_PATH)
 
 raw_before = raw.copy()
-raw_before.filter(1.0, 40.0, picks='meg', verbose=False)
+raw_before.filter(1, 42.0, picks='meg', verbose=False)
 _, evoked_before = build_epochs_and_evoked(raw_before, TMIN, TMAX, BASELINE, REJECT)
 snr_lin_before, snr_db_before, noise_rms_before = compute_snr_from_evoked(evoked_before)
 print(f"SNR before: {snr_lin_before:.4f} ({snr_db_before:.2f} dB)\n")
+
 fig = evoked_before.plot(spatial_colors=True, show=False, time_unit='s')
-fig.savefig(os.path.join(os.path.dirname(__file__), 'evoked_before.png'), dpi=300, bbox_inches='tight')
+fig.savefig(os.path.join(SCRIPT_DIR, 'evoked_before.png'), dpi=300, bbox_inches='tight')
 plt.close(fig)
-
-picks_mag = mne.pick_types(raw_before.info, meg=True, exclude='bads')
-n_comp = min(N_COMPONENTS, len(picks_mag) - 1)
-
-
-# %% 逐方法运行 ICA，收集指标和 evoked
-results = {}
-evokeds = {'before': evoked_before}
-
-for method in METHODS:
-    print(f"=== {method.upper()} ===")
-    if method == 'jade':
-        try:
-            ica = build_ica_from_jade(raw_before, picks_mag, n_comp)
-        except Exception as e:
-            print(f"  拟合失败: {e}")
-            continue
-    elif method == 'sobi':
-        try:
-            ica = build_ica_from_sobi(raw_before, picks_mag, n_comp)
-        except Exception as e:
-            print(f"  拟合失败: {e}")
-            continue
-    elif method == 'amuse':
-        try:
-            ica = build_ica_from_amuse(raw_before, picks_mag, n_comp)
-        except Exception as e:
-            print(f"  拟合失败: {e}")
-            continue
-    else:
-        fit_params = dict(extended=True) if method == 'infomax' else {}
-        ica = ICA(n_components=n_comp, method=method,
-                  fit_params=fit_params, random_state=RANDOM_STATE, verbose=False)
-        try:
-            ica.fit(raw_before, picks=picks_mag, verbose=False)
-        except Exception as e:
-            print(f"  拟合失败: {e}")
-            continue
-
-    # 手动选择排除成分：地形图和时序图同时弹出，关闭时序图后继续
-    matplotlib.use('TkAgg')
-    ica.plot_components(picks=range(n_comp), show=True)
-    plt.pause(0.1)
-    ica.plot_sources(raw_before, show=True, block=True)
-    exclude = ica.exclude[:]
-    matplotlib.use('Agg')
-    print(f"  排除成分: {exclude}")
-
-    if len(exclude) == 0:
-        evoked_after = evoked_before
-        snr_lin, snr_db = snr_lin_before, snr_db_before
-        sf_linear, sf_db = 0.0, float('-inf')
-    else:
-        raw_after = raw_before.copy()
-        ica.apply(raw_after, verbose=False)
-        _, evoked_after = build_epochs_and_evoked(raw_after, TMIN, TMAX, BASELINE, REJECT)
-        snr_lin, snr_db, _ = compute_snr_from_evoked(evoked_after)
-        picks_ev = mne.pick_types(evoked_before.info, meg=True, exclude='bads')
-        data_before = evoked_before.data[picks_ev]
-        data_after  = evoked_after.data[picks_ev]
-        sf_linear, sf_db = compute_sf(data_before, data_after)
-
-    print(f"  SNR after : {snr_lin:.4f} ({snr_db:.2f} dB)  |  Delta SNR: {snr_db - snr_db_before:+.2f} dB  |  SF: {sf_linear:.4f} ({sf_db:.2f} dB)")
-    results[method] = dict(snr_lin=snr_lin, snr_db=snr_db,
-                           delta_snr_db=snr_db - snr_db_before,
-                           sf_linear=sf_linear, sf_db=sf_db,
-                           n_excluded=len(exclude), excluded_components=exclude)
-    evokeds[method] = evoked_after
-
-    # ICA 后立即弹出 evoked 对比图
-    matplotlib.use('TkAgg')
-    fig_ev, axes_ev = plt.subplots(1, 2, figsize=(10, 4), facecolor='white')
-    for ax, evoked, title in zip(axes_ev,
-                                  [evoked_before, evoked_after],
-                                  ['Before ICA', f'After ICA ({method.upper()})']):
-        evoked.plot(axes=ax, spatial_colors=True, show=False, titles=None, time_unit='s')
-        for text in list(ax.texts):
-            text.remove()
-        ax.axvline(0, color='red', linestyle='--', linewidth=1)
-        ax.axvspan(BASELINE[0], BASELINE[1], alpha=0.1, color='blue')
-        ax.grid(True, alpha=0.3)
-    axes_ev[0].set_title(f"Before ICA\nSNR {snr_db_before:.1f} dB", fontsize=9)
-    axes_ev[1].set_title(f"After ICA ({method.upper()})\nSNR {snr_db:.1f} dB  dSNR {snr_db - snr_db_before:+.1f} dB  excluded {len(exclude)}", fontsize=9)
-    fig_ev.suptitle(f'Vision MEG — {method.upper()} Before/After ICA', fontsize=11)
-    fig_ev.tight_layout()
-    plt.show(block=True)
-    matplotlib.use('Agg')
-    fig_ev.savefig(os.path.join(OUTPUT_DIR, f'evoked_{method}.png'), dpi=300, bbox_inches='tight')
-    plt.close(fig_ev)
-    print(f"  已保存: evoked_{method}.png")
-
-
-# %% 保存指标 JSON
-results['before'] = dict(snr_lin=snr_lin_before, snr_db=snr_db_before)
-with open(os.path.join(OUTPUT_DIR, 'ica_compare_metrics.json'), 'w') as f:
-    json.dump(results, f, indent=2)
-print("\n已保存指标 JSON")
-
-
-# %% 对比图：各方法 evoked
-n_plots = 1 + len([m for m in METHODS if m in evokeds])
-fig, axes = plt.subplots(1, n_plots, figsize=(5 * n_plots, 5), facecolor='white')
-plot_items = [('before', 'Before ICA')] + [(m, m.upper()) for m in METHODS if m in evokeds]
-
-for ax, (key, title) in zip(axes, plot_items):
-    evokeds[key].plot(axes=ax, spatial_colors=True, show=False, titles=None, time_unit='s')
-    for text in list(ax.texts):
-        text.remove()
-    if key in results and key != 'before':
-        r = results[key]
-        subtitle = f"SNR {r['snr_db']:.1f} dB  dSNR {r['delta_snr_db']:+.1f} dB\nSF {r['sf_db']:.1f} dB  excluded {r['n_excluded']}"
-    else:
-        subtitle = f"SNR {snr_db_before:.1f} dB"
-    ax.set_title(f"{title}\n{subtitle}", fontsize=9)
-    ax.axvline(0, color='red', linestyle='--', linewidth=1)
-    ax.axvspan(BASELINE[0], BASELINE[1], alpha=0.1, color='blue')
-    ax.grid(True, alpha=0.3)
-
-fig.suptitle('Vision MEG — ICA Method Comparison', fontsize=13)
-plt.tight_layout()
-out_path = os.path.join(OUTPUT_DIR, 'ica_compare_evoked.png')
-fig.savefig(out_path, dpi=300, bbox_inches='tight')
-plt.close(fig)
-print(f"已保存: {out_path}")
-
-
-# %% 柱状图：SNR 和 SF 对比
-methods_done = [m for m in METHODS if m in results]
-x = np.arange(len(methods_done))
-snr_vals    = [results[m]['snr_db'] for m in methods_done]
-delta_vals  = [results[m]['delta_snr_db'] for m in methods_done]
-sf_vals     = [results[m]['sf_db'] for m in methods_done]
-
-fig, axes = plt.subplots(1, 3, figsize=(12, 4), facecolor='white')
-for ax, vals, ylabel, title in zip(
-        axes,
-        [snr_vals, delta_vals, sf_vals],
-        ['SNR (dB)', 'ΔSNR (dB)', 'SF (dB)'],
-        ['Denoised SNR', 'SNR Improvement', 'Suppression Factor SF']):
-    bars = ax.bar(x, vals, color=['#4C72B0', '#DD8452', '#55A868', '#C44E52'][:len(methods_done)])
-    ax.axhline(0, color='gray', linewidth=0.8)
-    if title == 'Denoised SNR':
-        ax.axhline(snr_db_before, color='red', linestyle='--', linewidth=1, label=f'Before ICA {snr_db_before:.1f} dB')
-        ax.legend(fontsize=8)
-    ax.set_xticks(x)
-    ax.set_xticklabels([m.upper() for m in methods_done])
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    for bar, val in zip(bars, vals):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                f'{val:.2f}', ha='center', va='bottom', fontsize=9)
-
-plt.tight_layout()
-out_path = os.path.join(OUTPUT_DIR, 'ica_compare_metrics.png')
-fig.savefig(out_path, dpi=300, bbox_inches='tight')
-plt.close(fig)
-print(f"已保存: {out_path}")
+print("已保存 evoked_before.png")

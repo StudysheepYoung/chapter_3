@@ -16,7 +16,7 @@ DATA_DIR     = os.path.join(SCRIPT_DIR, "batch_preprocessing_results")
 OUTPUT_DIR   = os.path.join(SCRIPT_DIR, "ica_compare_results")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-TMIN, TMAX   = -0.1, 0.6
+TMIN, TMAX   = -0.1, 0.3
 BASELINE     = (-0.1, 0)
 REJECT       = dict(mag=10e-12)
 EVENT_ID     = 1000000000
