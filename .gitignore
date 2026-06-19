@@ -5,8 +5,9 @@ hearing/conference
 hearing/ica*
 hearing/*.basedata
 hearing/*.mat
-hearing/stumulus_plots
+hearing/stimulus_plots
 hearing/useless
+hearing/*.png
 vision/conference
 vision/ica*
 vision/*.basedata
@@ -14,5 +15,6 @@ vision/*.mat
 touch/batch*
 touch/conference
 touch/ica*
+touch/stimulus_plots 
 EEGdenoiseNet/.claude
 EEGdenoiseNet/CLAUDE.md
