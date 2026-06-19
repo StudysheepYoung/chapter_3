@@ -1,4 +1,3 @@
-李玲
 .claude
 .vscode
 CLAUDE.md
@@ -6,6 +5,8 @@ hearing/conference
 hearing/ica*
 hearing/*.basedata
 hearing/*.mat
+hearing/stumulus_plots
+hearing/useless
 vision/conference
 vision/ica*
 vision/*.basedata
@@ -14,6 +15,4 @@ touch/batch*
 touch/conference
 touch/ica*
 EEGdenoiseNet/.claude
-EEGdenoiseNet/data
 EEGdenoiseNet/CLAUDE.md
-test
